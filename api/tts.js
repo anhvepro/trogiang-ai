@@ -1,27 +1,18 @@
 export default async function handler(req, res) {
-  // ✅ Cho phép tất cả origin truy cập API này
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  // ✅ Xử lý request OPTIONS (trình duyệt gửi để hỏi trước)
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
     const { text } = req.query;
-    if (!text) {
-      return res.status(400).json({ error: "Thiếu tham số text" });
-    }
+    if (!text) return res.status(400).json({ error: "Thiếu tham số text" });
 
-    // ✅ Ghi thẳng key FPT.AI vào đây để test (key của thầy)
-    const FPT_API_KEY = "ceytqQlIkjv6zKpxlliocdtAjSQeQRvN"; // ← thay bằng key FPT của thầy
-
-    const response = await fetch("https://api.fpt.ai/hmi/tts/v5", {
+    const FPT_KEY = process.env.FPT_API_KEY || "ceytqQlIkjv6zKpxlliocdtAjSQeQRvN";
+    const fptResp = await fetch("https://api.fpt.ai/hmi/tts/v5", {
       method: "POST",
       headers: {
-        "api-key": FPT_API_KEY,
+        "api-key": FPT_KEY,
         "voice": "banmai",
         "speed": "0",
         "Content-Type": "application/x-www-form-urlencoded",
@@ -29,28 +20,38 @@ export default async function handler(req, res) {
       body: new URLSearchParams({ text }),
     });
 
-    const data = await response.json();
+    const fptJson = await fptResp.json();
+    console.log("📡 FPT JSON:", fptJson);
 
-    if (!data.async) {
-      console.error("❌ Không nhận được link âm thanh:", data);
-      return res.status(500).json({ error: "Không nhận được link âm thanh từ FPT", data });
+    if (!fptJson.async)
+      return res.status(500).json({ error: "Không nhận được link âm thanh", fptJson });
+
+    const audioUrl = fptJson.async;
+
+    // 🕓 Kiểm tra đến khi file có thật (FPT cần 2–5s để tạo)
+    let fileReady = false;
+    for (let i = 0; i < 10; i++) {
+      const check = await fetch(audioUrl, { method: "HEAD" });
+      if (check.ok) {
+        fileReady = true;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 1500)); // đợi 1.5s
     }
 
-    console.log("🔗 Link âm thanh:", data.async);
+    if (!fileReady)
+      return res.status(504).json({ error: "File chưa sẵn sàng từ FPT" });
 
-    // 🕒 Đợi FPT tạo file (thường mất 1–2s)
-    await new Promise(r => setTimeout(r, 2000));
+    // 🪄 Tải file thật và gửi về client
+    const audioData = await fetch(audioUrl);
+    const arrayBuffer = await audioData.arrayBuffer();
 
-    const audioResp = await fetch(data.async);
-    if (!audioResp.ok) {
-      throw new Error(`Không thể tải file âm thanh: ${audioResp.status}`);
-    }
-
-    const audioBuffer = await audioResp.arrayBuffer();
     res.setHeader("Content-Type", "audio/mpeg");
-    res.status(200).send(Buffer.from(audioBuffer));
-  } catch (error) {
-    console.error("🔥 Lỗi xử lý FPT:", error);
-    res.status(500).json({ error: "Lỗi xử lý proxy", details: error.message });
+    res.status(200).send(Buffer.from(arrayBuffer));
+    console.log("✅ Gửi file âm thanh thành công");
+
+  } catch (err) {
+    console.error("🔥 Lỗi proxy:", err);
+    res.status(500).json({ error: "Lỗi proxy FPT", details: err.message });
   }
 }
