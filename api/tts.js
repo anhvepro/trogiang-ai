@@ -1,91 +1,56 @@
-// api/tts.js (Vercel)
 export default async function handler(req, res) {
-  // CORS: cho phép mọi origin (để chạy local dev + hosting)
+  // ✅ Cho phép tất cả origin truy cập API này
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Preflight
+  // ✅ Xử lý request OPTIONS (trình duyệt gửi để hỏi trước)
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
   try {
-    const text = (req.query.text || "").toString().trim();
+    const { text } = req.query;
     if (!text) {
-      return res.status(400).json({ error: "Thiếu tham số 'text'." });
+      return res.status(400).json({ error: "Thiếu tham số text" });
     }
 
-    const FPT_KEY = process.env.FPT_API_KEY;
-    if (!FPT_KEY) {
-      return res.status(500).json({ error: "FPT_API_KEY chưa được cấu hình trong Environment Variables." });
-    }
+    // ✅ Ghi thẳng key FPT.AI vào đây để test (key của thầy)
+    const FPT_API_KEY = "ceytqQlIkjv6zKpxlliocdtAjSQeQRvN"; // ← thay bằng key FPT của thầy
 
-    // Gọi FPT để tạo file TTS
-    const fptResp = await fetch("https://api.fpt.ai/hmi/tts/v5", {
+    const response = await fetch("https://api.fpt.ai/hmi/tts/v5", {
       method: "POST",
       headers: {
-        "api-key": FPT_KEY,
+        "api-key": FPT_API_KEY,
         "voice": "banmai",
         "speed": "0",
-        // gửi plain text giống như khi dùng curl -d "..."
-        "Content-Type": "text/plain; charset=utf-8"
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: text
+      body: new URLSearchParams({ text }),
     });
 
-    // Nếu FPT trả lỗi (401/403...) thì đọc message để debug
-    if (!fptResp.ok) {
-      const txt = await fptResp.text();
-      console.error("FPT API returned non-OK:", fptResp.status, txt);
-      return res.status(502).json({ error: "FPT API error", status: fptResp.status, body: txt });
+    const data = await response.json();
+
+    if (!data.async) {
+      console.error("❌ Không nhận được link âm thanh:", data);
+      return res.status(500).json({ error: "Không nhận được link âm thanh từ FPT", data });
     }
 
-    const data = await fptResp.json();
-    if (!data || !data.async) {
-      console.error("FPT did not return async link:", data);
-      return res.status(502).json({ error: "Không nhận được link âm thanh từ FPT", data });
-    }
+    console.log("🔗 Link âm thanh:", data.async);
 
-    const mp3Url = data.async;
-    // Poll (HEAD) tối đa N lần để đợi file mp3 sẵn sàng
-    let ready = false;
-    const maxChecks = 10;
-    const delayMs = 1500;
-    for (let i = 0; i < maxChecks; i++) {
-      try {
-        const head = await fetch(mp3Url, { method: "HEAD" });
-        if (head.ok) {
-          ready = true;
-          break;
-        }
-      } catch (e) {
-        // ignore, chờ tiếp
-      }
-      await new Promise(r => setTimeout(r, delayMs));
-    }
+    // 🕒 Đợi FPT tạo file (thường mất 1–2s)
+    await new Promise(r => setTimeout(r, 2000));
 
-    if (!ready) {
-      console.error("FPT audio not ready after polling:", mp3Url);
-      return res.status(504).json({ error: "FPT audio chưa sẵn sàng sau thời gian chờ." });
-    }
-
-    // Lấy file mp3 và trả về cho client cùng header CORS
-    const audioResp = await fetch(mp3Url);
+    const audioResp = await fetch(data.async);
     if (!audioResp.ok) {
-      const txt = await audioResp.text().catch(()=>null);
-      console.error("Failed to fetch mp3:", audioResp.status, txt);
-      return res.status(502).json({ error: "Không tải được file âm thanh từ FPT", status: audioResp.status });
+      throw new Error(`Không thể tải file âm thanh: ${audioResp.status}`);
     }
 
-    const arrayBuffer = await audioResp.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
+    const audioBuffer = await audioResp.arrayBuffer();
     res.setHeader("Content-Type", "audio/mpeg");
-    res.status(200).send(buffer);
-
-  } catch (err) {
-    console.error("Unhandled error in TTS proxy:", err);
-    res.status(500).json({ error: "Lỗi proxy server", message: err?.message || String(err) });
+    res.status(200).send(Buffer.from(audioBuffer));
+  } catch (error) {
+    console.error("🔥 Lỗi xử lý FPT:", error);
+    res.status(500).json({ error: "Lỗi xử lý proxy", details: error.message });
   }
 }
