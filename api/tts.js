@@ -1,4 +1,14 @@
 export default async function handler(req, res) {
+  // ✅ Cho phép tất cả origin truy cập API này
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // ✅ Xử lý request OPTIONS (trình duyệt gửi để hỏi trước)
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   try {
     const { text } = req.query;
     if (!text) {
@@ -11,9 +21,9 @@ export default async function handler(req, res) {
         "api-key": process.env.FPT_API_KEY,
         "voice": "banmai",
         "speed": "0",
-        "Content-Type": "application/x-www-form-urlencoded"
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({ text })
+      body: new URLSearchParams({ text }),
     });
 
     const data = await response.json();
@@ -22,18 +32,12 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "Không nhận được link âm thanh từ FPT", data });
     }
 
-    // 🟢 Cho phép mọi domain truy cập API này
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-    // 🕒 Lấy file mp3 thật từ FPT
+    // 🕒 Lấy file âm thanh thật từ link FPT
     const audioResp = await fetch(data.async);
     const audioBuffer = await audioResp.arrayBuffer();
 
     res.setHeader("Content-Type", "audio/mpeg");
-    res.send(Buffer.from(audioBuffer));
-
+    res.status(200).send(Buffer.from(audioBuffer));
   } catch (error) {
     console.error("Lỗi proxy FPT:", error);
     res.status(500).json({ error: "Lỗi xử lý proxy", details: error.message });
