@@ -9,6 +9,12 @@ export default async function handler(req, res) {
     if (!text) return res.status(400).json({ error: "Thiếu tham số text" });
 
     const FPT_KEY = process.env.FPT_API_KEY || "ceytqQlIkjv6zKpxlliocdtAjSQeQRvN";
+    if (!FPT_KEY) {
+      return res.status(500).json({ error: "Chưa có FPT_API_KEY trong Vercel" });
+    }
+
+    console.log("🔊 Gọi FPT TTS cho text:", text);
+
     const fptResp = await fetch("https://api.fpt.ai/hmi/tts/v5", {
       method: "POST",
       headers: {
@@ -21,37 +27,42 @@ export default async function handler(req, res) {
     });
 
     const fptJson = await fptResp.json();
-    console.log("📡 FPT JSON:", fptJson);
+    console.log("📡 Phản hồi FPT:", fptJson);
 
-    if (!fptJson.async)
-      return res.status(500).json({ error: "Không nhận được link âm thanh", fptJson });
+    if (!fptJson || !fptJson.async) {
+      return res.status(502).json({
+        error: "Không nhận được async link từ FPT",
+        data: fptJson,
+      });
+    }
 
     const audioUrl = fptJson.async;
 
-    // 🕓 Kiểm tra đến khi file có thật (FPT cần 2–5s để tạo)
-    let fileReady = false;
+    // 🕓 Đợi file FPT tạo xong (tối đa 10 lần)
+    let ok = false;
     for (let i = 0; i < 10; i++) {
       const check = await fetch(audioUrl, { method: "HEAD" });
+      console.log(`Kiểm tra file (lần ${i + 1}): ${check.status}`);
       if (check.ok) {
-        fileReady = true;
+        ok = true;
         break;
       }
-      await new Promise(r => setTimeout(r, 1500)); // đợi 1.5s
+      await new Promise(r => setTimeout(r, 2000));
     }
 
-    if (!fileReady)
-      return res.status(504).json({ error: "File chưa sẵn sàng từ FPT" });
+    if (!ok) {
+      return res.status(504).json({ error: "File chưa sẵn sàng sau 10 lần thử" });
+    }
 
-    // 🪄 Tải file thật và gửi về client
-    const audioData = await fetch(audioUrl);
-    const arrayBuffer = await audioData.arrayBuffer();
-
+    // 📥 Tải file thật về và gửi cho client
+    const file = await fetch(audioUrl);
+    const arrayBuffer = await file.arrayBuffer();
     res.setHeader("Content-Type", "audio/mpeg");
     res.status(200).send(Buffer.from(arrayBuffer));
-    console.log("✅ Gửi file âm thanh thành công");
+    console.log("✅ File âm thanh đã được gửi về client");
 
-  } catch (err) {
-    console.error("🔥 Lỗi proxy:", err);
-    res.status(500).json({ error: "Lỗi proxy FPT", details: err.message });
+  } catch (error) {
+    console.error("🔥 Lỗi xử lý proxy:", error);
+    res.status(500).json({ error: "Lỗi xử lý proxy", details: error.message });
   }
 }
